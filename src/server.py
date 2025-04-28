@@ -1,8 +1,6 @@
-import asyncio
 import logging
 import sys
-import os
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from mcp.server.fastmcp import FastMCP, Context
 from kubernetes import client, config
@@ -40,33 +38,22 @@ def init_kubernetes_client():
 # Tools for interacting with Crossplane resources
 
 @mcp.tool()
-async def list_compositions(context: Context, namespace: Optional[str] = None) -> Dict[str, Any]:
+async def list_compositions(context: Context) -> Dict[str, Any]:
     """
     List all Crossplane Compositions in the specified namespace or across all namespaces.
-    
-    Args:
-        namespace: Optional namespace to filter compositions (None for all namespaces)
     
     Returns:
         Dict containing the list of compositions
     """
     k8s_client = init_kubernetes_client()
-    
+
     try:
-        if namespace:
-            compositions = k8s_client.list_namespaced_custom_object(
-                group="apiextensions.crossplane.io",
-                version="v1",
-                namespace=namespace,
-                plural="compositions"
-            )
-        else:
-            compositions = k8s_client.list_cluster_custom_object(
-                group="apiextensions.crossplane.io",
-                version="v1",
-                plural="compositions"
-            )
-        
+        compositions = k8s_client.list_cluster_custom_object(
+            group="apiextensions.crossplane.io",
+            version="v1",
+            plural="compositions"
+        )
+
         return {
             "success": True,
             "compositions": compositions["items"],
@@ -80,13 +67,12 @@ async def list_compositions(context: Context, namespace: Optional[str] = None) -
         }
 
 @mcp.tool()
-async def get_composition(context: Context, name: str, namespace: Optional[str] = None) -> Dict[str, Any]:
+async def get_composition(context: Context, name: str) -> Dict[str, Any]:
     """
     Get a specific Crossplane Composition by name.
     
     Args:
         name: Name of the composition
-        namespace: Optional namespace for the composition (None for cluster-scoped)
     
     Returns:
         Dict containing the composition details
@@ -94,21 +80,12 @@ async def get_composition(context: Context, name: str, namespace: Optional[str] 
     k8s_client = init_kubernetes_client()
     
     try:
-        if namespace:
-            composition = k8s_client.get_namespaced_custom_object(
-                group="apiextensions.crossplane.io",
-                version="v1",
-                namespace=namespace,
-                plural="compositions",
-                name=name
-            )
-        else:
-            composition = k8s_client.get_cluster_custom_object(
-                group="apiextensions.crossplane.io",
-                version="v1",
-                plural="compositions",
-                name=name
-            )
+        composition = k8s_client.get_cluster_custom_object(
+            group="apiextensions.crossplane.io",
+            version="v1",
+            plural="compositions",
+            name=name
+        )
         
         return {
             "success": True,
@@ -206,46 +183,6 @@ async def get_xrd(context: Context, name: str) -> Dict[str, Any]:
             "error": str(e)
         }
 
-# @mcp.resource("server://info")
-# async def get_server_info(context: Context) -> Dict[str, Any]:
-#     """
-#     Get information about the Crossplane MCP server.
-#
-#     Returns:
-#         Dict containing server information
-#     """
-#     return {
-#         "name": "Crossplane MCP Server",
-#         "version": "0.1.0",
-#         "description": "A server that implements the Crossplane MCP API for interacting with Crossplane resources",
-#         "supported_apis": [
-#             "apiextensions.crossplane.io/v1/compositions",
-#             "apiextensions.crossplane.io/v1/compositeresourcedefinitions"
-#         ]
-#     }
-
-# async def main():
-#     """Main entrypoint for running the MCP server"""
-#     logger.info("Starting Crossplane MCP Server...")
-#
-#     # Define port from environment or use default
-#     port = int(os.environ.get("MCP_SERVER_PORT", 8080))
-#     host = os.environ.get("MCP_SERVER_HOST", "127.0.0.1")
-#
-#     try:
-#         mcp.run()
-#         # Start the server
-#         # server = await mcp.start(host=host, port=port)
-#         # logger.info(f"Crossplane MCP Server running on {host}:{port}")
-#         #
-#         # # Keep the server running until interrupted
-#         # await server.serve_forever()
-#     except KeyboardInterrupt:
-#         logger.info("Shutting down Crossplane MCP Server...")
-#     except Exception as e:
-#         logger.error(f"Error running MCP server: {str(e)}")
-#         sys.exit(1)
-
 if __name__ == "__main__":
-    mcp.run()
-    # asyncio.run(main())
+    logger.info("crossplane-mcp-server running with stdio transport")
+    mcp.run(transport='stdio')
