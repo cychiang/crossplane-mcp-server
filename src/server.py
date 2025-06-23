@@ -46,11 +46,11 @@ def init_kubernetes_client() -> client.CustomObjectsApi:
 
 # Tools for interacting with Crossplane resources
 
-@mcp.tool()
+@mcp.tool(description="List all Crossplane Compositions in the specified namespace or across all namespaces.")
 async def list_compositions(context: Context) -> Dict[str, Any]:
     """
     List all Crossplane Compositions in the specified namespace or across all namespaces.
-    
+
     Returns:
         Dict containing the list of compositions
     """
@@ -76,14 +76,14 @@ async def list_compositions(context: Context) -> Dict[str, Any]:
         }
 
 
-@mcp.tool()
+@mcp.tool(description="Get a specific Crossplane Composition by name.")
 async def get_composition(context: Context, name: str) -> Dict[str, Any]:
     """
     Get a specific Crossplane Composition by name.
-    
+
     Args:
         name: Name of the composition
-    
+
     Returns:
         Dict containing the composition details
     """
@@ -121,11 +121,11 @@ async def get_composition(context: Context, name: str) -> Dict[str, Any]:
         }
 
 
-@mcp.tool()
+@mcp.tool(description="List all Crossplane CompositeResourceDefinitions (XRDs).")
 async def list_xrds(context: Context) -> Dict[str, Any]:
     """
     List all Crossplane CompositeResourceDefinitions (XRDs).
-    
+
     Returns:
         Dict containing the list of XRDs
     """
@@ -151,14 +151,14 @@ async def list_xrds(context: Context) -> Dict[str, Any]:
         }
 
 
-@mcp.tool()
+@mcp.tool(description="Get a specific Crossplane CompositeResourceDefinition (XRD) by name.")
 async def get_xrd(context: Context, name: str) -> Dict[str, Any]:
     """
     Get a specific Crossplane CompositeResourceDefinition (XRD) by name.
-    
+
     Args:
         name: Name of the XRD
-    
+
     Returns:
         Dict containing the XRD details
     """
@@ -196,7 +196,7 @@ async def get_xrd(context: Context, name: str) -> Dict[str, Any]:
         }
 
 
-@mcp.tool()
+@mcp.tool(description="List all Crossplane Claims (CompositeResourceClaims) across all namespaces.")
 async def list_claims(context: Context) -> Dict[str, Any]:
     """
     List all Crossplane Claims (CompositeResourceClaims) across all namespaces.
@@ -223,7 +223,7 @@ async def list_claims(context: Context) -> Dict[str, Any]:
         }
 
 
-@mcp.tool()
+@mcp.tool(description="Find managed resources referenced by a CompositeResource.")
 async def find_managed_resources(context: Context, composite_name: str, composite_kind: str = "",
                                  composite_namespace: str = "default") -> Dict[str, Any]:
     """
