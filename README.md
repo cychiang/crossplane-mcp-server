@@ -47,3 +47,7 @@ Using Crossplane MCP Server in `Claude Desktop`, add the following to `claude_de
 [ ] List CompositeResourceDefinitions
 [ ] Get CompositeResourceDefinition
 [ ] ...TBC
+
+## Roadmap
+- Able to get status by a given name of claim or composite resource(XR)
+  - To be able to find a claim 
