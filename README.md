@@ -57,6 +57,21 @@ In `Claude Desktop`, add the following to `claude_desktop_config.json`:
 }
 ```
 
+## Running Tests
+
+You can run the server and client tests using [uv](https://github.com/astral-sh/uv):
+
+```bash
+uv run -m unittest src/server/test_server.py
+uv run -m unittest src/client/test_client.py
+```
+
+Or to run all tests at once:
+
+```bash
+uv run -m unittest discover src
+```
+
 ## Supported Tools
 
 - [x] List Compositions
