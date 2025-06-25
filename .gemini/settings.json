@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "crossplane-mcp-server": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "src/server/server.py"
+      ],
+      "enabled": true
+    }
+  }
+}
