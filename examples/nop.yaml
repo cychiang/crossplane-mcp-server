@@ -1,0 +1,7 @@
+apiVersion: nop.example.org/v1alpha1
+kind: NopResource
+metadata:
+  name: example-nopresource
+  namespace: default
+spec:
+  coolField: "example-value"

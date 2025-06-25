@@ -211,13 +211,42 @@ async def get_xrd(context: Context, name: str) -> Union[GetXRDResponse, ErrorRes
 
 @mcp.tool(description="List all Crossplane Claims (CompositeResourceClaims) across all namespaces.")
 async def list_claims(context: Context) -> Union[ListClaimsResponse, ErrorResponse]:
-    return await _list_resources(
-        resource_type="claims",
-        plural_name="compositeresourceclaims",
-        list_func=k8s_client.list_cluster_custom_object,
-        namespaced_list_func=k8s_client.list_namespaced_custom_object,
-        namespace=context.get("namespace"),
-    )
+    namespace = context.get("namespace")
+    try:
+        xrds_list: K8sObjectList = k8s_client.list_cluster_custom_object(
+            group="apiextensions.crossplane.io", version="v1", plural="compositeresourcedefinitions"
+        )
+        all_claims: List[K8sObject] = []
+        for xrd in xrds_list.get("items", []):
+            if "claimNames" not in xrd.get("spec", {}):
+                continue
+
+            claim_plural = xrd["spec"]["claimNames"]["plural"]
+            claim_group = xrd["spec"]["group"]
+            claim_version = xrd["spec"]["versions"][0]["name"]
+
+            if namespace:
+                claims = k8s_client.list_namespaced_custom_object(
+                    group=claim_group,
+                    version=claim_version,
+                    namespace=namespace,
+                    plural=claim_plural,
+                )
+            else:
+                claims = k8s_client.list_cluster_custom_object(
+                    group=claim_group,
+                    version=claim_version,
+                    plural=claim_plural,
+                )
+            all_claims.extend(claims.get("items", []))
+
+        return {"success": True, "claims": all_claims, "count": len(all_claims)}
+    except client.rest.ApiException as e:
+        logger.error(f"API error listing claims: {str(e)}")
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"Unexpected error listing claims: {str(e)}")
+        return {"success": False, "error": str(e)}
 
 
 @mcp.tool(description="Find managed resources referenced by a CompositeResource.")
