@@ -7,6 +7,11 @@ A Python implementation of the Model Context Protocol (MCP) for Crossplane. This
 - `src/server/` — Contains the MCP server implementation (see `server.py`).
 - `src/client/` — Contains a sample MCP client (`client.py`) that demonstrates how to send requests with context to the server.
 
+## Prerequisites
+
+- Python >= 3.13
+- [uv](https://github.com/astral-sh/uv)
+
 ## Usage
 
 ### Running the MCP Server
@@ -59,17 +64,26 @@ In `Claude Desktop`, add the following to `claude_desktop_config.json`:
 
 ## Running Tests
 
-You can run the server and client tests using [uv](https://github.com/astral-sh/uv):
+You can run all tests using the `Makefile`:
 
 ```bash
-uv run -m unittest src/server/test_server.py
-uv run -m unittest src/client/test_client.py
+make test
 ```
 
-Or to run all tests at once:
+You can also run tests for the server or client individually:
 
 ```bash
-uv run -m unittest discover src
+make test-server
+make test-client
+```
+
+## Linting and Formatting
+
+This project uses `ruff` for linting and formatting. You can run the linter and formatter using the Makefile:
+
+```bash
+make lint
+make format
 ```
 
 ## Supported Tools

@@ -1,7 +1,11 @@
 [project]
 name = "crossplane-mcp-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "A Python implementation of the Model Context Protocol (MCP) for Crossplane."
+authors = [
+    { name = "Your Name", email = "your@email.com" },
+]
+license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

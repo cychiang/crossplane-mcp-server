@@ -1,7 +1,5 @@
 import unittest
 from unittest.mock import patch, MagicMock
-import sys
-import types
 
 # Import the server module
 import src.server.server as server_mod
