@@ -4,10 +4,15 @@
       "type": "stdio",
       "command": "uv",
       "args": [
+        "--directory",
+        "/Users/cychiang/Projects/github.com/cychiang/crossplane-mcp-server",
         "run",
-        "src/server/server.py"
+        "src/server/main.py"
       ],
-      "enabled": true
+      "enabled": true,
+      "env": {
+        "PYTHONPATH": "/Users/cychiang/Projects/github.com/cychiang/crossplane-mcp-server/src"
+      }
     }
   }
 }

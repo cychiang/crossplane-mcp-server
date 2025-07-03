@@ -1,37 +1,45 @@
 import unittest
-from unittest.mock import patch, MagicMock
+import threading
+import uvicorn
+import time
+import requests
+
+from src.server import main as server_mod
 import src.client.client as client_mod
 
-class TestMCPClient(unittest.TestCase):
-    @patch('subprocess.Popen')
-    def test_send_request_success(self, mock_popen):
-        # Mock the server process
-        mock_proc = MagicMock()
-        mock_proc.stdin.write = MagicMock()
-        mock_proc.stdin.flush = MagicMock()
-        mock_proc.stdout.readline.return_value = '{"result": "ok"}\n'
-        mock_proc.stderr.read.return_value = ''
-        mock_proc.terminate = MagicMock()
-        mock_popen.return_value = mock_proc
+class TestMCPClientIntegration(unittest.TestCase):
+    server_thread = None
+    server_started = threading.Event()
 
-        response = client_mod.send_request("list_compositions", {}, {"user": "alice", "namespace": "dev"})
+    @classmethod
+    def run_server(cls):
+        app = server_mod.mcp.run(transport="sse")
+        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+
+    @classmethod
+    def setUpClass(cls):
+        """Starts the MCP server in a background thread before any tests run."""
+        cls.server_thread = threading.Thread(target=cls.run_server, daemon=True)
+        cls.server_thread.start()
+        # Wait for the server to start by polling the health check endpoint
+        for _ in range(20):
+            try:
+                response = requests.get("http://127.0.0.1:8000/health")
+                if response.status_code == 200:
+                    return
+            except requests.ConnectionError:
+                pass
+            time.sleep(1)
+        raise RuntimeError("Server did not start in time")
+
+    def test_send_request_lists_compositions(self):
+        """Tests if the client can successfully get a response from the live server."""
+        response = client_mod.send_request("list_compositions", {}, {"user": "test"})
         self.assertIn("result", response)
-        self.assertEqual(response["result"], "ok")
-
-    @patch('subprocess.Popen')
-    def test_send_request_invalid_json(self, mock_popen):
-        mock_proc = MagicMock()
-        mock_proc.stdin.write = MagicMock()
-        mock_proc.stdin.flush = MagicMock()
-        mock_proc.stdout.readline.return_value = 'not a json\n'
-        mock_proc.stderr.read.return_value = ''
-        mock_proc.terminate = MagicMock()
-        mock_popen.return_value = mock_proc
-
-        response = client_mod.send_request("list_compositions", {}, {"user": "bob"})
-        self.assertIn("error", response)
-        self.assertIn("Invalid response", response["error"])
+        self.assertTrue(response["result"]["success"])
+        self.assertIn("compositions", response["result"])
 
 if __name__ == "__main__":
     unittest.main()
+
 

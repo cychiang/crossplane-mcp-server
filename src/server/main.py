@@ -7,6 +7,7 @@ from kubernetes import client, config
 from typing_extensions import TypedDict, NotRequired
 
 from mcp.server.fastmcp import FastMCP, Context
+from src.server import cache
 
 # Set up logging
 logging.basicConfig(
@@ -83,7 +84,16 @@ def create_mcp_server() -> 'FastMCP':
     )
 
 
+from fastapi import FastAPI
+
+app = FastAPI()
+
 mcp = create_mcp_server()
+app.mount("/mcp", mcp.run(transport="sse"))
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 
 # Initialize Kubernetes client
@@ -109,25 +119,19 @@ k8s_client = init_kubernetes_client()
 async def _list_resources(
     resource_type: str,
     plural_name: str,
-    list_func: Callable[..., K8sObjectList],
-    namespaced_list_func: Callable[..., K8sObjectList],
     namespace: Optional[str],
 ) -> Union[Dict[str, Any], ErrorResponse]:
     try:
+        resource_cache = cache.get_cache().get(plural_name, {})
         if namespace:
-            resources = namespaced_list_func(
-                group="apiextensions.crossplane.io",
-                version="v1",
-                namespace=namespace,
-                plural=plural_name,
-            )
+            items = [
+                item
+                for item in resource_cache.values()
+                if item.get("metadata", {}).get("namespace") == namespace
+            ]
         else:
-            resources = list_func(group="apiextensions.crossplane.io", version="v1", plural=plural_name)
-        items = resources.get("items", [])
+            items = list(resource_cache.values())
         return {"success": True, resource_type: items, "count": len(items)}
-    except client.rest.ApiException as e:
-        logger.error(f"API error listing {resource_type}: {str(e)}")
-        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.error(f"Unexpected error listing {resource_type}: {str(e)}")
         return {"success": False, "error": str(e)}
@@ -137,27 +141,16 @@ async def _get_resource(
     resource_type: str,
     plural_name: str,
     name: str,
-    get_func: Callable[..., K8sObject],
-    namespaced_get_func: Callable[..., K8sObject],
     namespace: Optional[str],
 ) -> Union[Dict[str, Any], ErrorResponse]:
     try:
-        if namespace:
-            resource = namespaced_get_func(
-                group="apiextensions.crossplane.io",
-                version="v1",
-                namespace=namespace,
-                plural=plural_name,
-                name=name,
-            )
+        resource_cache = cache.get_cache().get(plural_name, {})
+        key = f"{namespace}/{name}" if namespace else name
+        resource = resource_cache.get(key)
+        if resource:
+            return {"success": True, resource_type: resource}
         else:
-            resource = get_func(group="apiextensions.crossplane.io", version="v1", plural=plural_name, name=name)
-        return {"success": True, resource_type: resource}
-    except client.rest.ApiException as e:
-        if e.status == 404:
             return {"success": False, "error": f"{resource_type.capitalize()} '{name}' not found"}
-        logger.error(f"API error getting {resource_type}: {str(e)}")
-        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.error(f"Unexpected error getting {resource_type}: {str(e)}")
         return {"success": False, "error": str(e)}
@@ -168,8 +161,6 @@ async def list_compositions(context: Context) -> Union[ListCompositionsResponse,
     return await _list_resources(
         resource_type="compositions",
         plural_name="compositions",
-        list_func=k8s_client.list_cluster_custom_object,
-        namespaced_list_func=k8s_client.list_namespaced_custom_object,
         namespace=context.get("namespace"),
     )
 
@@ -180,8 +171,6 @@ async def get_composition(context: Context, name: str) -> Union[GetCompositionRe
         resource_type="composition",
         plural_name="compositions",
         name=name,
-        get_func=k8s_client.get_cluster_custom_object,
-        namespaced_get_func=k8s_client.get_namespaced_custom_object,
         namespace=context.get("namespace"),
     )
 
@@ -191,8 +180,6 @@ async def list_xrds(context: Context) -> Union[ListXRDsResponse, ErrorResponse]:
     return await _list_resources(
         resource_type="xrds",
         plural_name="compositeresourcedefinitions",
-        list_func=k8s_client.list_cluster_custom_object,
-        namespaced_list_func=k8s_client.list_namespaced_custom_object,  # Not used, but required by helper
         namespace=None,
     )
 
@@ -203,8 +190,6 @@ async def get_xrd(context: Context, name: str) -> Union[GetXRDResponse, ErrorRes
         resource_type="xrd",
         plural_name="compositeresourcedefinitions",
         name=name,
-        get_func=k8s_client.get_cluster_custom_object,
-        namespaced_get_func=k8s_client.get_namespaced_custom_object,  # Not used, but required by helper
         namespace=None,
     )
 
@@ -213,37 +198,14 @@ async def get_xrd(context: Context, name: str) -> Union[GetXRDResponse, ErrorRes
 async def list_claims(context: Context) -> Union[ListClaimsResponse, ErrorResponse]:
     namespace = context.get("namespace")
     try:
-        xrds_list: K8sObjectList = k8s_client.list_cluster_custom_object(
-            group="apiextensions.crossplane.io", version="v1", plural="compositeresourcedefinitions"
-        )
+        claim_caches = cache.get_cache().get("claims", {})
         all_claims: List[K8sObject] = []
-        for xrd in xrds_list.get("items", []):
-            if "claimNames" not in xrd.get("spec", {}):
-                continue
-
-            claim_plural = xrd["spec"]["claimNames"]["plural"]
-            claim_group = xrd["spec"]["group"]
-            claim_version = xrd["spec"]["versions"][0]["name"]
-
-            if namespace:
-                claims = k8s_client.list_namespaced_custom_object(
-                    group=claim_group,
-                    version=claim_version,
-                    namespace=namespace,
-                    plural=claim_plural,
-                )
-            else:
-                claims = k8s_client.list_cluster_custom_object(
-                    group=claim_group,
-                    version=claim_version,
-                    plural=claim_plural,
-                )
-            all_claims.extend(claims.get("items", []))
+        for claim_plural_cache in claim_caches.values():
+            for claim in claim_plural_cache.values():
+                if not namespace or claim.get("metadata", {}).get("namespace") == namespace:
+                    all_claims.append(claim)
 
         return {"success": True, "claims": all_claims, "count": len(all_claims)}
-    except client.rest.ApiException as e:
-        logger.error(f"API error listing claims: {str(e)}")
-        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.error(f"Unexpected error listing claims: {str(e)}")
         return {"success": False, "error": str(e)}
@@ -259,16 +221,18 @@ async def find_managed_resources(
     composite_namespace = context.get("namespace", composite_namespace)
     cr: K8sObject
     try:
+        xrd_cache = cache.get_cache().get("compositeresourcedefinitions", {})
+        
         if not composite_kind:
+            # If kind is not specified, we have to search through all XRDs and live query for the CR.
+            # This is because we don't cache all composite resources by default.
+            # This can be improved by caching all CRs.
             xrds: K8sObjectList = k8s_client.list_cluster_custom_object(
                 group="apiextensions.crossplane.io", version="v1", plural="compositeresourcedefinitions"
             )
             found_cr = False
             for xrd in xrds.get("items", []):
                 for version in xrd.get("spec", {}).get("versions", []):
-                    crd_kind = xrd.get("spec", {}).get("names", {}).get("kind")
-                    if not crd_kind:
-                        continue
                     try:
                         cr = k8s_client.get_namespaced_custom_object(
                             group=xrd["spec"]["group"],
@@ -286,27 +250,29 @@ async def find_managed_resources(
                 if found_cr:
                     break
             if not found_cr:
-                error_response: ErrorResponse = {"success": False, "error": f"CompositeResource '{composite_name}' not found"}
-                return error_response
+                return {"success": False, "error": f"CompositeResource '{composite_name}' not found"}
         else:
-            xrds = k8s_client.list_cluster_custom_object(
-                group="apiextensions.crossplane.io", version="v1", plural="compositeresourcedefinitions"
-            )
-            xrd = next((x for x in xrds.get("items", []) if x["spec"]["names"]["kind"] == composite_kind), None)
+            xrd = next((x for x in xrd_cache.values() if x["spec"]["names"]["kind"] == composite_kind), None)
             if not xrd:
-                error_response: ErrorResponse = {"success": False, "error": f"XRD for kind '{composite_kind}' not found"}
-                return error_response
+                return {"success": False, "error": f"XRD for kind '{composite_kind}' not found"}
 
-            cr = k8s_client.get_namespaced_custom_object(
-                group=xrd["spec"]["group"],
-                version=xrd["spec"]["versions"][0]["name"],
-                namespace=composite_namespace,
-                plural=xrd["spec"]["names"]["plural"],
-                name=composite_name,
-            )
+            # Live query for the specific CR, as we don't cache them.
+            try:
+                cr = k8s_client.get_namespaced_custom_object(
+                    group=xrd["spec"]["group"],
+                    version=xrd["spec"]["versions"][0]["name"],
+                    namespace=composite_namespace,
+                    plural=xrd["spec"]["names"]["plural"],
+                    name=composite_name,
+                )
+            except client.rest.ApiException as e:
+                if e.status == 404:
+                    return {"success": False, "error": f"Composite resource '{composite_name}' not found."}
+                raise
 
         resource_refs = cr.get("status", {}).get("resourceRefs", [])
         managed_resources: List[K8sObject] = []
+        # Live query for managed resources, as we don't cache them.
         for ref in resource_refs:
             try:
                 mr_group, mr_version = ref["apiVersion"].split("/")
@@ -320,26 +286,23 @@ async def find_managed_resources(
                     name=ref["name"],
                 )
                 managed_resources.append(mr)
+            except client.rest.ApiException as e:
+                if e.status != 404:
+                    logger.warning(f"Error fetching managed resource {ref['name']}: {e.reason}")
             except Exception as e:
-                logger.error(f"Error fetching managed resource {ref}: {str(e)}")
+                logger.error(f"Unexpected error fetching managed resource {ref['name']}: {str(e)}")
 
-        response: FindManagedResourcesResponse = {
+        return {
             "success": True,
             "managed_resources": managed_resources,
             "count": len(managed_resources),
         }
-        return response
     except client.rest.ApiException as e:
-        if e.status == 404:
-            error_response: ErrorResponse = {"success": False, "error": f"Composite resource '{composite_name}' not found."}
-            return error_response
         logger.error(f"API error finding managed resources: {str(e)}")
-        error_response: ErrorResponse = {"success": False, "error": str(e)}
-        return error_response
+        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.error(f"Unexpected error finding managed resources: {str(e)}")
-        error_response: ErrorResponse = {"success": False, "error": str(e)}
-        return error_response
+        return {"success": False, "error": str(e)}
 
 
 @mcp.tool(description="Diagnose a Crossplane Claim by inspecting its Composite Resource and Managed Resources.")
@@ -356,29 +319,21 @@ async def diagnose_claim(
     logger.info(f"Diagnosing claim '{claim_name}' in namespace '{namespace}' with kind '{claim_kind}'")
 
     try:
-        xrds_list: K8sObjectList = k8s_client.list_cluster_custom_object(
-            group="apiextensions.crossplane.io", version="v1", plural="compositeresourcedefinitions"
-        )
-        xrds: List[K8sObject] = xrds_list.get("items", [])
+        xrd_cache = cache.get_cache().get("compositeresourcedefinitions", {})
+        xrds: List[K8sObject] = list(xrd_cache.values())
 
         claim_xrd = next((xrd for xrd in xrds if xrd.get("spec", {}).get("claimNames", {}).get("kind") == claim_kind), None)
         if not claim_xrd:
-            error_response: ErrorResponse = {"success": False, "error": f"No XRD found for claim kind '{claim_kind}'"}
-            return error_response
+            return {"success": False, "error": f"No XRD found for claim kind '{claim_kind}'"}
 
         claim_plural = claim_xrd["spec"]["claimNames"]["plural"]
-        claim_group = claim_xrd["spec"]["group"]
-        claim_version = claim_xrd["spec"]["versions"][0]["name"]
 
-        try:
-            claim: K8sObject = k8s_client.get_namespaced_custom_object(
-                group=claim_group, version=claim_version, namespace=namespace, plural=claim_plural, name=claim_name
-            )
-        except client.rest.ApiException as e:
-            if e.status == 404:
-                error_response: ErrorResponse = {"success": False, "error": f"Claim '{claim_name}' of kind '{claim_kind}' not found in namespace '{namespace}'"}
-                return error_response
-            raise
+        claim_cache_key = f"claims/{claim_plural}"
+        claim_key = f"{namespace}/{claim_name}"
+        claim = cache.get_cache().get(claim_cache_key, {}).get(claim_key)
+
+        if not claim:
+            return {"success": False, "error": f"Claim '{claim_name}' of kind '{claim_kind}' not found in namespace '{namespace}'"}
 
         diagnosis: Diagnosis = {
             "claim": {"name": claim["metadata"]["name"], "kind": claim["kind"], "status": claim.get("status", {})},
@@ -399,16 +354,23 @@ async def diagnose_claim(
         xr_ref = claim.get("spec", {}).get("resourceRef")
         if not xr_ref:
             summary.append("Claim is not bound to a Composite Resource (XR).")
-            response: DiagnoseClaimResponse = {"success": True, "diagnosis": diagnosis}
-            return response
+            return {"success": True, "diagnosis": diagnosis}
 
         xr_plural = claim_xrd["spec"]["names"]["plural"]
         xr_api_version = xr_ref["apiVersion"]
         xr_group, xr_version = xr_api_version.split("/")
 
-        composite_resource: K8sObject = k8s_client.get_cluster_custom_object(
-            group=xr_group, version=xr_version, plural=xr_plural, name=xr_ref["name"]
-        )
+        # Live query for the composite resource.
+        try:
+            composite_resource: K8sObject = k8s_client.get_cluster_custom_object(
+                group=xr_group, version=xr_version, plural=xr_plural, name=xr_ref["name"]
+            )
+        except client.rest.ApiException as e:
+            if e.status == 404:
+                summary.append(f"Composite Resource '{xr_ref['name']}' not found.")
+                return {"success": True, "diagnosis": diagnosis}
+            raise
+
         diagnosis["compositeResource"] = {
             "name": composite_resource["metadata"]["name"],
             "kind": composite_resource["kind"],
@@ -418,6 +380,7 @@ async def diagnose_claim(
 
         managed_resources_details: List[K8sObject] = []
         mr_refs = composite_resource.get("status", {}).get("resourceRefs", [])
+        # Live query for managed resources.
         for ref in mr_refs:
             try:
                 mr_group, mr_version = ref["apiVersion"].split("/")
@@ -440,8 +403,12 @@ async def diagnose_claim(
                 }
                 managed_resources_details.append(mr_detail)
                 analyze_conditions(mr, f"Managed Resource '{mr['metadata']['name']}' ({mr['kind']})")
+            except client.rest.ApiException as e:
+                if e.status != 404:
+                    logger.warning(f"Error fetching managed resource {ref['name']}: {e.reason}")
+                summary.append(f"Could not fetch Managed Resource '{ref['name']}' ({ref['kind']}). Error: {e.reason}")
             except Exception as e:
-                logger.error(f"Error fetching managed resource {ref['name']}: {str(e)}")
+                logger.error(f"Unexpected error fetching managed resource {ref['name']}: {str(e)}")
                 summary.append(f"Could not fetch Managed Resource '{ref['name']}' ({ref['kind']}). Error: {str(e)}")
 
         diagnosis["managedResources"] = managed_resources_details
@@ -449,21 +416,23 @@ async def diagnose_claim(
         if not summary:
             summary.append("All resources (Claim, XR, and MRs) are reporting a Ready status.")
 
-        response: DiagnoseClaimResponse = {"success": True, "diagnosis": diagnosis}
-        return response
+        return {"success": True, "diagnosis": diagnosis}
 
     except client.rest.ApiException as e:
         error_message = f"Kubernetes API error: {e.reason} ({e.status})"
         logger.error(f"{error_message} - Body: {e.body}")
-        error_response: ErrorResponse = {"success": False, "error": error_message, "details": e.body}
-        return error_response
+        return {"success": False, "error": error_message, "details": e.body}
     except Exception as e:
         error_message = f"An unexpected error occurred: {str(e)}"
         logger.error(error_message, exc_info=True)
-        error_response: ErrorResponse = {"success": False, "error": error_message}
-        return error_response
+        return {"success": False, "error": error_message}
 
 
 if __name__ == "__main__":
-    logger.info("crossplane-mcp-server running with stdio transport")
-    mcp.run(transport='stdio')
+    import uvicorn
+
+    logger.info("Starting Kubernetes resource watcher...")
+    cache.start_watching(k8s_client)
+
+    logger.info("Starting crossplane-mcp-server with sse transport")
+    uvicorn.run(mcp.app, host="127.0.0.1", port=8000, log_level="info")

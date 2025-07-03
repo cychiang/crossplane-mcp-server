@@ -2,15 +2,25 @@
 
 A Python implementation of the Model Context Protocol (MCP) for Crossplane. This project enables LLMs and other clients to interact with Kubernetes and Crossplane resources (such as XRDs, Compositions, Claims, and Managed Resources) via a standardized protocol.
 
+## Architecture
+
+The server runs as a FastAPI web server and exposes an MCP endpoint over Server-Sent Events (SSE). It implements a caching layer (`src/server/cache.py`) that watches for changes in Kubernetes resources (Compositions, XRDs, and Claims) and stores them in memory. This significantly improves performance by reducing direct API calls to the Kubernetes server.
+
+- The server is a FastAPI application that uses `uvicorn` for serving.
+- The cache is populated by background threads that watch for resource changes.
+- All tool functions in `src/server/main.py` now query the in-memory cache instead of making live API calls.
+- The server dynamically discovers and watches claim types based on the installed XRDs.
+
 ## Project Structure
 
-- `src/server/` — Contains the MCP server implementation (see `server.py`).
+- `src/server/` — Contains the MCP server implementation (`main.py`) and caching logic (`cache.py`).
 - `src/client/` — Contains a sample MCP client (`client.py`) that demonstrates how to send requests with context to the server.
 
 ## Prerequisites
 
 - Python >= 3.13
 - [uv](https://github.com/astral-sh/uv)
+- A running Kubernetes cluster with Crossplane installed.
 
 ## Usage
 
@@ -19,13 +29,15 @@ A Python implementation of the Model Context Protocol (MCP) for Crossplane. This
 You can run the server directly using [uv](https://github.com/astral-sh/uv):
 
 ```bash
-uv run src/server/server.py
+uv run python src/server/main.py
 ```
+
+The server will be available at `http://127.0.0.1:8000`.
 
 Or, if you want to use the sample client:
 
 ```bash
-uv run src/client/client.py
+uv run python src/client/client.py
 ```
 
 ### Example: Integrating with VSCode or Claude Desktop
@@ -36,12 +48,8 @@ In `vscode`, add the following to `mcp.json` under your workspace folder:
   "inputs": [],
   "servers": {
     "CrossplaneServer": {
-      "type": "stdio",
-      "command": "uv",
-      "args": [
-        "run",
-        "src/server/server.py"
-      ]
+      "type": "sse",
+      "url": "http://127.0.0.1:8000/mcp"
     }
   }
 }
@@ -52,11 +60,8 @@ In `Claude Desktop`, add the following to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "crossplane-mcp-server": {
-      "command": "uv",
-      "args": [
-        "run",
-        "src/server/server.py"
-      ]
+      "type": "sse",
+      "url": "http://127.0.0.1:8000/mcp"
     }
   }
 }
@@ -64,26 +69,19 @@ In `Claude Desktop`, add the following to `claude_desktop_config.json`:
 
 ## Running Tests
 
-You can run all tests using the `Makefile`:
+To run all tests, use the following command:
 
 ```bash
-make test
-```
-
-You can also run tests for the server or client individually:
-
-```bash
-make test-server
-make test-client
+uv run python -m unittest discover src
 ```
 
 ## Linting and Formatting
 
-This project uses `ruff` for linting and formatting. You can run the linter and formatter using the Makefile:
+This project uses `ruff` for linting and formatting. You can run the linter and formatter using the following commands:
 
 ```bash
-make lint
-make format
+uv run ruff check .
+uv run ruff format .
 ```
 
 ## Supported Tools
@@ -94,12 +92,14 @@ make format
 - [x] Get CompositeResourceDefinition (XRD)
 - [x] List Claims
 - [x] Find Managed Resources referenced by a CompositeResource
+- [x] Diagnose Claim
 
 ## Development Status
 
 - The server and client are separated for clarity and modularity.
 - The client demonstrates real communication with the server using stdio.
 - Context passing is supported and demonstrated in the client.
+- The server now uses a caching layer for improved performance.
 
 ## Contributing
 
